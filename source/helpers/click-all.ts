@@ -1,0 +1,28 @@
+import type {DelegateEvent} from 'delegate-it';
+import mem from 'memoize';
+import {$$} from 'select-dom';
+
+import preserveScroll from './preserve-scroll.js';
+
+type EventHandler = (event: DelegateEvent<MouseEvent, HTMLElement>) => void;
+
+function clickAllExcept(elementsToClick: string, except: HTMLElement): void {
+	for (const item of $$(elementsToClick)) {
+		if (item !== except) {
+			item.click();
+		}
+	}
+}
+
+export default mem((selector: string | ((clickedItem: HTMLElement) => string)): EventHandler => event => {
+	if (!(event.altKey && event.isTrusted)) {
+		return;
+	}
+
+	const clickedItem = event.delegateTarget;
+
+	// `parentElement` is the anchor because `clickedItem` might be hidden/replaced after the click
+	const resetScroll = preserveScroll(clickedItem.parentElement!);
+	clickAllExcept(typeof selector === 'string' ? selector : selector(clickedItem), clickedItem);
+	resetScroll();
+});

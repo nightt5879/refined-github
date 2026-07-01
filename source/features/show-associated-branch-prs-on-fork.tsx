@@ -1,0 +1,119 @@
+import './show-associated-branch-prs-on-fork.css';
+
+import cx from 'clsx';
+import React from 'dom-chef';
+import * as pageDetect from 'github-url-detection';
+import memoize from 'memoize';
+import GitMergeIcon from 'octicons-plain-react/GitMerge';
+import GitPullRequestIcon from 'octicons-plain-react/GitPullRequest';
+import GitPullRequestClosedIcon from 'octicons-plain-react/GitPullRequestClosed';
+import GitPullRequestDraftIcon from 'octicons-plain-react/GitPullRequestDraft';
+import RepoForkedIcon from 'octicons-plain-react/RepoForked';
+import {closestElement} from 'select-dom';
+import {CachedFunction} from 'webext-storage-cache';
+
+import features from '../feature-manager.js';
+import api from '../github-helpers/api.js';
+import {cacheByRepo} from '../github-helpers/index.js';
+import observe from '../helpers/selector-observer.js';
+import AssociatedPullRequests from './show-associated-branch-prs-on-fork.gql';
+
+type PullRequest = {
+	timelineItems: {
+		nodes: AnyObject;
+	};
+	number: number;
+	state: keyof typeof stateIcon;
+	isDraft: boolean;
+	url: string;
+};
+
+export const pullRequestsAssociatedWithBranch = new CachedFunction('associatedBranchPullRequests', {
+	async updater(): Promise<Record<string, PullRequest>> {
+		const {repository} = await api.v4(AssociatedPullRequests);
+
+		const pullRequests: Record<string, PullRequest> = {};
+		for (const {name, associatedPullRequests} of repository.refs.nodes) {
+			const [prInfo] = associatedPullRequests.nodes as PullRequest[];
+			// Check if the ref was deleted, since the result includes pr's that are not in fact related to this branch but rather to the branch name.
+			const wasHeadRefDeleted = prInfo?.timelineItems.nodes[0]?.__typename === 'HeadRefDeletedEvent';
+			if (prInfo && !wasHeadRefDeleted) {
+				prInfo.state = prInfo.isDraft && prInfo.state === 'OPEN' ? 'DRAFT' : prInfo.state;
+				pullRequests[name] = prInfo;
+			}
+		}
+
+		return pullRequests;
+	},
+	maxAge: {hours: 1},
+	staleWhileRevalidate: {days: 4},
+	cacheKey: cacheByRepo,
+});
+
+export const stateIcon = {
+	// eslint-disable-next-line @typescript-eslint/naming-convention -- The same case as in the API response
+	OPEN: GitPullRequestIcon,
+	// eslint-disable-next-line @typescript-eslint/naming-convention -- The same case as in the API response
+	CLOSED: GitPullRequestClosedIcon,
+	// eslint-disable-next-line @typescript-eslint/naming-convention -- The same case as in the API response
+	MERGED: GitMergeIcon,
+	// eslint-disable-next-line @typescript-eslint/naming-convention -- The same case as in the API response
+	DRAFT: GitPullRequestDraftIcon,
+};
+
+async function addLink(branch: HTMLElement): Promise<void> {
+	const prs = await pullRequestsAssociatedWithBranch.get();
+	const branchName = branch.getAttribute('title')!;
+	const prInfo = prs[branchName];
+	if (!prInfo) {
+		return;
+	}
+
+	const StateIcon = stateIcon[prInfo.state] ?? (() => {/* empty */});
+	const stateClassName = prInfo.state.toLowerCase();
+
+	const cell = closestElement('tr.TableRow', branch)
+		.children
+		.item(4)!;
+
+	cell.classList.add('rgh-pr-cell');
+	cell.append(
+		<div className="rgh-pr-box">
+			<a
+				href={prInfo.url}
+				data-hovercard-url={prInfo.url + '/hovercard'}
+				aria-label={`Link to the ${prInfo.isDraft ? 'draft ' : ''}pull request #${prInfo.number}`}
+				className="rgh-pr-link"
+			>
+				<StateIcon width={14} height={14} className={stateClassName} />
+				<RepoForkedIcon width={14} height={14} className={cx('mr-1 tmp-mr-1', stateClassName)} />
+				#{prInfo.number}
+			</a>
+		</div>,
+	);
+}
+
+async function init(signal: AbortSignal): Promise<void> {
+	// Memoize because it's being called twice for each. Ideally this should be part of the selector observer
+	// https://github.com/refined-github/refined-github/pull/7194#issuecomment-1894972091
+	observe('react-app[app-name=repos-branches] a[class*=BranchName] div[title]', memoize(addLink), {signal});
+}
+
+void features.add(import.meta.url, {
+	asLongAs: [
+		pageDetect.isForkedRepo,
+	],
+	include: [
+		pageDetect.isBranches,
+	],
+	requiresToken: true,
+	init,
+});
+
+/*
+
+Test URLs:
+
+https://github.com/bfred-it-org/github-sandbox/branches
+
+*/

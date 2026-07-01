@@ -1,0 +1,78 @@
+import elementReady from 'element-ready';
+import * as pageDetect from 'github-url-detection';
+import {$optional, elementExists} from 'select-dom';
+import {CachedFunction} from 'webext-storage-cache';
+
+import features from '../feature-manager.js';
+import api from '../github-helpers/api.js';
+import {expectTokenScope} from '../github-helpers/github-token.js';
+import {cacheByRepo} from '../github-helpers/index.js';
+import looseParseInt from '../helpers/loose-parse-int.js';
+import observe from '../helpers/selector-observer.js';
+import HasAnyProjects from './clean-conversation-filters.gql';
+
+const hasAnyProjects = new CachedFunction('has-projects', {
+	async updater(): Promise<boolean> {
+		const activeProjectsCounter = await elementReady('[data-hotkey="g b"] .Counter');
+		if (looseParseInt(activeProjectsCounter) > 0) {
+			return true;
+		}
+
+		const isOrganization = elementExists('[rel=author][data-hovercard-type="organization"]');
+		if (!activeProjectsCounter && !isOrganization) {
+			// No tab = Projects disabled in repo
+			// No organization = no Projects in organization
+			return false;
+		}
+
+		await expectTokenScope('read:project');
+		const {repository, organization} = await api.v4(HasAnyProjects, {
+			allowErrors: true,
+		});
+
+		return Boolean(repository.projects.totalCount)
+			|| Boolean(repository.projectsV2.totalCount)
+			// Joint query, both org and projects are optional
+			|| Boolean(organization?.projects?.totalCount)
+			// Joint query, both org and projects are optional
+			|| Boolean(organization?.projectsV2?.totalCount);
+	},
+	maxAge: {days: 1},
+	staleWhileRevalidate: {days: 20},
+	cacheKey: cacheByRepo,
+});
+
+async function hideProjects(container: HTMLElement): Promise<void> {
+	const filter = $optional('[data-testid="projects-anchor-button"]', container);
+
+	// If the filter is missing, then it has been disabled organization-wide already
+	if (filter && !(await hasAnyProjects.get())) {
+		filter.remove();
+	}
+}
+
+async function hide(container: HTMLElement): Promise<void> {
+	// Keep separate so that one doesn't crash the other
+	void hideProjects(container);
+}
+
+async function init(signal: AbortSignal): Promise<void> {
+	observe(String.raw`#\:rs\:-list-view-metadata`, hide, {signal});
+}
+
+void features.add(import.meta.url, {
+	include: [
+		pageDetect.isRepoIssueOrPRList,
+	],
+	requiresToken: true,
+	init,
+});
+
+/*
+
+Test URLs:
+
+- No projects: https://github.com/left-pad/left-pad/issues
+- Projects and milestones (no-op): https://github.com/tc39/ecma402/issues
+
+*/

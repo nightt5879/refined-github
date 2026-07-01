@@ -1,0 +1,19 @@
+/* Simulates fixed columns */
+.rgh-release-download-count {
+	& > span:not(:last-child, [data-view-component]) {
+		flex-basis: 0 !important;
+		min-width: 5em;
+	}
+
+	/* Date */
+	& > span:last-child {
+		width: 7em;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	/* Right-align on mobile */
+	[data-rgh-heat] {
+		min-width: 5em;
+	}
+}

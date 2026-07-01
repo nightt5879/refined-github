@@ -1,0 +1,88 @@
+import React from 'dom-chef';
+import * as pageDetect from 'github-url-detection';
+import InfoIcon from 'octicons-plain-react/Info';
+import {closestElement} from 'select-dom';
+
+import features from '../feature-manager.js';
+import createBanner from '../github-helpers/banner.js';
+import {isRefinedGitHubRepo} from '../github-helpers/index.js';
+import TimelineItem from '../github-helpers/timeline-item.js';
+import observe from '../helpers/selector-observer.js';
+import {getCloseDate, getResolvedText, wasLongAgo} from './netiquette.js';
+
+async function addConversationBanner(newCommentBox: HTMLElement): Promise<void> {
+	// Check inside the observer because React views load after dom-ready
+	const closingDate = await getCloseDate();
+	if (!closingDate || !wasLongAgo(closingDate)) {
+		features.unload(import.meta.url);
+		return;
+	}
+
+	const button = (
+		<button
+			type="button"
+			className="btn-link"
+			onClick={() => {
+				newCommentBox.hidden = false;
+
+				// Keep the banner, make it visible
+				closestElement('.rgh-bg-none', button).classList.replace('rgh-bg-none', 'flash-error');
+
+				// Unlink this button
+				button.replaceWith(button.firstChild!);
+
+				newCommentBox.scrollIntoView({
+					behavior: 'smooth',
+				});
+			}}
+		>
+			comment
+		</button>
+	);
+
+	const banner = (
+		<TimelineItem>
+			{createBanner({
+				classes: ['rgh-bg-none'],
+				icon: <InfoIcon className="mr-1 tmp-mr-1" />,
+				text: <>
+					{getResolvedText(closingDate)} If you want to say something helpful, you can leave a {button}.{' '}
+					<strong>Do not</strong> report issues here.
+				</>,
+			})}
+		</TimelineItem>
+	);
+	newCommentBox.before(banner);
+	newCommentBox.hidden = true;
+}
+
+function init(signal: AbortSignal): void | false {
+	observe(
+		[
+			'#issuecomment-new:has(file-attachment)',
+			'[data-testid="comment-composer"]',
+		],
+		addConversationBanner,
+		{signal},
+	);
+}
+
+void features.add(import.meta.url, {
+	asLongAs: [
+		isRefinedGitHubRepo,
+	],
+	include: [
+		pageDetect.isConversation,
+	],
+	awaitDomReady: true, // We're specifically looking for the last event
+	init,
+});
+
+/*
+
+Test URLs
+
+- Old issue: https://github.com/refined-github/refined-github/issues/3076
+- Old PR: https://github.com/refined-github/refined-github/pull/159
+
+*/

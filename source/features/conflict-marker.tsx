@@ -1,0 +1,75 @@
+import './conflict-marker.css';
+
+import batchedFunction from 'batched-function';
+import React from 'dom-chef';
+import * as pageDetect from 'github-url-detection';
+import AlertIcon from 'octicons-plain-react/Alert';
+
+import features from '../feature-manager.js';
+import api from '../github-helpers/api.js';
+import {commentBoxHashPr, openPrsListLink} from '../github-helpers/selectors.js';
+import observe from '../helpers/selector-observer.js';
+import {tooltipped} from '../helpers/tooltip.js';
+
+async function addIcon(links: HTMLAnchorElement[]): Promise<void> {
+	const prConfigs = links.map(link => {
+		const [, owner, name, , prNumber] = link.pathname.split('/');
+		const key = api.escapeKey(owner, name, prNumber);
+		return {
+			key,
+			link,
+			owner,
+			name,
+			number: Number(prNumber),
+		};
+	});
+
+	// Batch queries cannot be exported to .gql files
+	const batchQuery = prConfigs.map(({key, owner, name, number}) => `
+		${key}: repository(owner: "${owner}", name: "${name}") {
+			pullRequest(number: ${number}) {
+				mergeable
+				state
+				isDraft
+			}
+		}
+	`).join('\n');
+
+	const data = await api.v4(batchQuery);
+
+	for (const pr of prConfigs) {
+		const {mergeable, state, isDraft} = data[pr.key].pullRequest;
+		if (mergeable === 'CONFLICTING' && (state === 'OPEN' || isDraft)) {
+			pr.link.after(
+				tooltipped(
+					{label: 'This PR has conflicts that must be resolved', direction: 'e'},
+					<a
+						className="rgh-conflict-marker color-fg-muted ml-2 tmp-ml-2"
+						href={pr.link.pathname + commentBoxHashPr}
+					>
+						<AlertIcon className="v-align-middle" />
+					</a>,
+				),
+			);
+		}
+	}
+}
+
+async function init(signal: AbortSignal): Promise<void> {
+	observe(openPrsListLink, batchedFunction(addIcon, {delay: 100}), {signal});
+}
+
+void features.add(import.meta.url, {
+	include: [
+		pageDetect.isIssueOrPRList,
+	],
+	requiresToken: true,
+	init,
+});
+
+/*
+Test URLs
+https://github.com/pulls
+https://github.com/refined-github/sandbox/issues?q=conflict
+https://github.com/kubernetes/kubernetes/milestone/62
+*/

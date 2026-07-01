@@ -1,0 +1,16 @@
+.footer > .d-flex {
+	transition: opacity 0.2s ease;
+	margin: auto;
+}
+
+.footer > .d-flex:not(:hover) {
+	opacity: 30%;
+}
+
+/*
+
+Test URL:
+
+https://github.com/refined-github/refined-github
+
+*/

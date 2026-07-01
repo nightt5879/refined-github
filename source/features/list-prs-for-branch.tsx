@@ -1,0 +1,71 @@
+import React from 'dom-chef';
+
+import features from '../feature-manager.js';
+import getCurrentGitRef from '../github-helpers/get-current-git-ref.js';
+import {addAfterBranchSelector, isPermalink, isRepoCommitListRoot} from '../github-helpers/index.js';
+import isDefaultBranch from '../github-helpers/is-default-branch.js';
+import {branchSelectorParent} from '../github-helpers/selectors.js';
+import observe from '../helpers/selector-observer.js';
+import {pullRequestsAssociatedWithBranch, stateIcon} from './show-associated-branch-prs-on-fork.js';
+
+// Taken from https://github.com/fregante/github-issue-link-status/blob/98792f2837352bacbf80664f3edbcec8e579ed17/source/github-issue-link-status.js#L10
+const stateColorMap = {
+	// eslint-disable-next-line @typescript-eslint/naming-convention -- The same case as in the API response
+	OPEN: 'color-fg-success',
+	// eslint-disable-next-line @typescript-eslint/naming-convention -- The same case as in the API response
+	CLOSED: 'color-fg-danger',
+	// eslint-disable-next-line @typescript-eslint/naming-convention -- The same case as in the API response
+	MERGED: 'color-fg-done',
+	// eslint-disable-next-line @typescript-eslint/naming-convention -- The same case as in the API response
+	DRAFT: '',
+};
+
+async function add(parent: HTMLDetailsElement): Promise<void | false> {
+	const prsByBranch = await pullRequestsAssociatedWithBranch.get();
+	const currentBranch = getCurrentGitRef()!;
+	const prInfo = prsByBranch[currentBranch];
+	if (!prInfo) {
+		return;
+	}
+
+	const StateIcon = stateIcon[prInfo.state];
+
+	addAfterBranchSelector(
+		parent,
+		<a
+			data-issue-and-pr-hovercards-enabled
+			href={prInfo.url}
+			className="btn flex-self-center rgh-list-prs-for-branch"
+			data-hovercard-type="pull_request"
+			data-hovercard-url={prInfo.url + '/hovercard'}
+		>
+			<StateIcon className={stateColorMap[prInfo.state]} />
+			<span> #{prInfo.number}</span>
+		</a>,
+	);
+}
+
+async function init(signal: AbortSignal): Promise<false | void> {
+	observe(branchSelectorParent, add, {signal});
+}
+
+void features.add(import.meta.url, {
+	include: [
+		isRepoCommitListRoot,
+	],
+	exclude: [
+		isDefaultBranch,
+		isPermalink,
+	],
+	requiresToken: true,
+	init,
+});
+
+/*
+
+Test URLs
+
+https://github.com/refined-github/sandbox/commits/4679-1
+https://github.com/refined-github/sandbox/commits/branch/with/slashes
+
+*/

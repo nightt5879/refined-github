@@ -1,0 +1,7 @@
+/* This covers the events in the timeline */
+.rgh-deleted-branch {
+	&, * {
+		text-decoration: line-through !important;
+		color: var(--fgColor-muted, var(--color-fg-muted, fuchsia));
+	}
+}

@@ -1,0 +1,27 @@
+/* Place conversation number before the title */
+.js-notifications-group [id^='notification'] {
+	flex-direction: row !important;
+
+	/* Hide duplicate repository URL */
+	& > .d-flex > .f6 {
+		font-size: 0 !important;
+
+		/* Size and position the conversation number */
+		& > span {
+			display: block;
+			font-size: 12px;
+			font-variant-numeric: tabular-nums;
+			margin-top: 2px; /* Align baseline with conversation title */
+			margin-right: 8px;
+			word-break: keep-all;
+		}
+	}
+}
+
+/*
+
+Test URLs:
+
+https://github.com/notifications
+
+*/

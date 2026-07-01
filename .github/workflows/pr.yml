@@ -1,0 +1,140 @@
+name: PR
+
+on:
+  pull_request_target:
+    types: [opened, reopened, edited, closed, synchronize]
+
+jobs:
+  block-ai:
+    if: github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const {owner, repo} = context.repo;
+
+            const isAi = pr.title.startsWith('AI:')
+              || /npx|build:bundle|build:typescript|Verification|Validation|Summary|Changes|Testing|—/.test(pr.body);
+            if (!isAi) return;
+
+            await github.rest.pulls.update({
+              owner,
+              repo,
+              pull_number: pr.number,
+              state: 'closed',
+              title: 'AI SPAM',
+            });
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: pr.number,
+              body: "This looks like an AI-generated PR, so we're preemptively closing it. If you're human and tested it, include a screenshot/video/gif of the working PR and we can reopen the PR. Don't open more PRs until this one is resolved.",
+            });
+
+  reminder:
+    name: Label Reminder
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Check if PR has no labels
+        id: check
+        uses: actions/github-script@v8
+        with:
+          result-encoding: string
+          script: |
+            const labels = context.payload.pull_request.labels;
+            return labels.length === 0;
+
+      - name: Post comment if unlabeled
+        if: steps.check.outputs.result == 'true'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          message: 'To maintainers: Please add labels to this PR'
+
+  Sync:
+    if: github.event.pull_request.state == 'open'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: read
+      contents: read
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const allowed = ['bug', 'enhancement', 'meta']
+            const { owner, repo } = context.repo
+            const pr = context.payload.pull_request
+
+            const query = `
+              query($owner:String!, $repo:String!, $number:Int!) {
+                repository(owner:$owner, name:$repo) {
+                  pullRequest(number:$number) {
+                    closingIssuesReferences(first: 10) {
+                      nodes {
+                        labels(first: 20) {
+                          nodes { name }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `
+
+            const res = await github.graphql(query, {
+              owner, repo, number: pr.number
+            })
+
+            const labels = new Set()
+            for (const issue of res.repository.pullRequest.closingIssuesReferences.nodes) {
+              for (const l of issue.labels.nodes) {
+                if (allowed.includes(l.name)) labels.add(l.name)
+              }
+            }
+
+            if (labels.size > 0) {
+              await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number: pr.number,
+                labels: [...labels]
+              })
+            }
+
+  no-force-push:
+    if: github.event.action == 'synchronize' && github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Check if force push
+        id: check
+        uses: actions/github-script@v8
+        with:
+          result-encoding: string
+          script: |
+            const { data } = await github.rest.repos.compareCommits({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              base: context.payload.before,
+              head: context.payload.after,
+            });
+
+            // This intentionally allows "force push to undo commit"
+            return String(data.status === 'diverged');
+
+      - if: steps.check.outputs.result == 'true'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          message: |
+            Please avoid force-pushing to this PR. It makes it harder for reviewers to track what changed since the last review.
+
+            Just push new commits on top of the branch instead — PRs are squashed on merge, so the commit history doesn't need to be clean.

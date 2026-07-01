@@ -1,0 +1,105 @@
+import React from 'dom-chef';
+import * as pageDetect from 'github-url-detection';
+import CheckIcon from 'octicons-plain-react/Check';
+import {$} from 'select-dom';
+import {CachedFunction} from 'webext-storage-cache';
+
+import features from '../feature-manager.js';
+import api from '../github-helpers/api.js';
+import {cacheByRepo} from '../github-helpers/index.js';
+import SearchQuery from '../github-helpers/search-query.js';
+import observe from '../helpers/selector-observer.js';
+import HasChecks from './pr-filters.gql';
+
+const reviewsFilterSelector = '#reviews-select-menu';
+
+function addDropdownItem(dropdown: HTMLElement, title: string, filterCategory: string, filterValue: string): void {
+	const filterQuery = `${filterCategory}:${filterValue}`;
+
+	const searchQuery = SearchQuery.from(location);
+	const isSelected = searchQuery.includes(filterQuery);
+
+	const filtersToRemove = searchQuery.getQueryParts().filter(part => part.startsWith(`${filterCategory}:`));
+	searchQuery.remove(...filtersToRemove);
+
+	if (!isSelected) {
+		searchQuery.append(filterQuery);
+	}
+
+	dropdown.append(
+		<a
+			href={searchQuery.href}
+			className="SelectMenu-item"
+			aria-checked={isSelected ? 'true' : 'false'}
+			role="menuitemradio"
+		>
+			<CheckIcon className="SelectMenu-icon SelectMenu-icon--check" />
+			<span>{title}</span>
+		</a>,
+	);
+}
+
+function addDraftFilter(dropdown: HTMLElement): void {
+	dropdown.append(
+		<div className="SelectMenu-divider">
+			Filter by draft pull requests
+		</div>,
+	);
+
+	addDropdownItem(dropdown, 'Ready for review', 'draft', 'false');
+	addDropdownItem(dropdown, 'Not ready for review (Draft PR)', 'draft', 'true');
+}
+
+const hasChecks = new CachedFunction('has-checks', {
+	async updater(): Promise<boolean> {
+		const {repository} = await api.v4(HasChecks);
+
+		return repository.head.history.nodes.some((commit: AnyObject) => commit.statusCheckRollup);
+	},
+	maxAge: {days: 3},
+	cacheKey: cacheByRepo,
+});
+
+async function addChecksFilter(reviewsFilter: HTMLElement): Promise<void> {
+	if (!await hasChecks.get()) {
+		return;
+	}
+
+	// Copy existing element and adapt its content
+	const checksFilter = reviewsFilter.cloneNode(true);
+	checksFilter.id = '';
+
+	$('summary', checksFilter).firstChild!.textContent = 'Checks\u{A0}'; // Only replace text node, keep caret
+	$('.SelectMenu-title', checksFilter).textContent = 'Filter by checks status';
+
+	const dropdown = $('.SelectMenu-list', checksFilter);
+	dropdown.textContent = ''; // Drop previous filters
+
+	for (const status of ['Success', 'Failure', 'Pending']) {
+		addDropdownItem(dropdown, status, 'status', status.toLowerCase());
+	}
+
+	reviewsFilter.after(checksFilter);
+}
+
+async function init(signal: AbortSignal): Promise<void> {
+	observe(reviewsFilterSelector, addChecksFilter, {signal});
+	observe(`${reviewsFilterSelector} .SelectMenu-list`, addDraftFilter, {signal});
+}
+
+void features.add(import.meta.url, {
+	include: [
+		pageDetect.isPRList,
+	],
+	requiresToken: true,
+	init,
+});
+
+/*
+
+Test URLs:
+
+https://github.com/pulls
+https://github.com/refined-github/refined-github/pulls
+
+*/
